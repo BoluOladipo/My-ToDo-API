@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="todo-frontend/manifest.json"> <!-- Ensure the path is correct -->
+  <meta name="theme-color" content="#000000">
+  <title>Todo List with Date and Time Reminders</title>
+  <link rel="stylesheet" href="todo-frontend/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>My Todo List</h1>
+
+    <form id="todo-form">
+      <input type="text" id="title" placeholder="Enter task title" required>
+      <input type="text" id="description" placeholder="Enter task description">
+      <input type="date" id="reminder-date">
+      <input type="time" id="reminder-time">
+      <button type="submit">Add Todo</button>
+    </form>
+
+    <h2>Todo List:</h2>
+    <ul id="todo-list"></ul>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const form = document.getElementById('todo-form');
+      const todoList = document.getElementById('todo-list');
+      const API_URL = 'http://localhost:3000/todos';
+      const notifiedIds = new Set();
+
+      // Ask for notification permission
+      if ('Notification' in window && Notification.permission !== 'granted') {
+        Notification.requestPermission().then(permission => {
+          if (permission !== 'granted') {
+            alert("Please enable notifications to receive reminders.");
+          }
+        });
+      }
+
+      // Reminder sound
+      const reminderSound = new Audio("https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg");
+
+      // Show notification
+      function showNotification(title, description) {
+        if (Notification.permission === 'granted') {
+          new Notification("⏰ Reminder: " + title, {
+            body: description || 'No description provided',
+            icon: 'https://cdn-icons-png.flaticon.com/512/1827/1827392.png'
+          });
+          reminderSound.play();
+        }
+      }
+
+      // Load existing todos
+      async function loadTodos() {
+        const response = await fetch(API_URL);
+        const todos = await response.json();
+        todos.forEach(todo => addTodoToDOM(todo));
+      }
+
+      // Add a task to the UI
+      function addTodoToDOM(todo) {
+        const li = document.createElement('li');
+        li.classList.toggle('completed', todo.completed);
+        li.innerHTML = `${todo.title} - ${todo.description || 'No description'}`;
+
+        li.addEventListener('click', async () => {
+          const res = await fetch(`${API_URL}/${todo.id}`, { method: 'PUT' });
+          const updatedTodo = await res.json();
+          li.classList.toggle('completed', updatedTodo.completed);
+        });
+
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = 'Delete';
+        deleteButton.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          await fetch(`${API_URL}/${todo.id}`, { method: 'DELETE' });
+          li.remove();
+        });
+
+        li.appendChild(deleteButton);
+        todoList.appendChild(li);
+      }
+
+      // Form submit handler
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const title = document.getElementById('title').value;
+        const description = document.getElementById('description').value;
+        const reminderDate = document.getElementById('reminder-date').value;
+        const reminderTime = document.getElementById('reminder-time').value;
+        const reminderDatetime = (reminderDate && reminderTime) ? `${reminderDate}T${reminderTime}:00` : null;
+
+        const response = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, description, reminderDatetime })
+        });
+
+        const newTodo = await response.json();
+        addTodoToDOM(newTodo);
+        form.reset();
+      });
+
+      // Poll every 10 seconds for reminders
+      setInterval(async () => {
+        const response = await fetch(API_URL);
+        const todos = await response.json();
+        const now = new Date();
+
+        todos.forEach(todo => {
+          if (todo.reminderDatetime && !notifiedIds.has(todo.id)) {
+            const remindTime = new Date(todo.reminderDatetime);
+            if (now >= remindTime && now - remindTime < 10000) {
+              showNotification(todo.title, todo.description);
+              notifiedIds.add(todo.id);
+            }
+          }
+        });
+      }, 10000);
+
+      // Register service worker for PWA
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/service-worker.js')  // Ensure correct path to service worker
+          .then(() => console.log('✅ Service Worker registered'))
+          .catch(err => console.error('❌ Service Worker registration failed:', err));
+      }
+
+      // Initial load
+      loadTodos();
+    });
+  </script>
+</body>
+</html>
